@@ -1,5 +1,5 @@
 {
-  "name": "my-turborepo",
+  "name": "depin-ontime",
   "private": true,
   "scripts": {
     "build": "turbo run build",
