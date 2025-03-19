@@ -6,19 +6,19 @@ const app = express();
 app.use(express.json());
 
 app.post("/api/v1/website", authmiddleware, async (req, res) => {
-    const userId = req.userId!;
-    const { url } = req.body;
+  const userId = req.userId!;
+  const { url } = req.body;
 
-    const data = await prismaClient.website.create({
-      data: {
-        userId,
-        url
-      }
-    })
+  const data = await prismaClient.website.create({
+    data: {
+      userId,
+      url,
+    },
+  });
 
-    res.json({
-      id: data.id
-    })
+  res.json({
+    id: data.id,
+  });
 });
 
 app.get("/api/v1/website/status", authmiddleware, async (req, res) => {
@@ -28,12 +28,12 @@ app.get("/api/v1/website/status", authmiddleware, async (req, res) => {
     where: {
       id: websiteId,
       userId,
-      disabled: false
+      disabled: false,
     },
     include: {
-      ticks: true
-    }
-  })
+      ticks: true,
+    },
+  });
 
   res.json(data);
 });
@@ -44,9 +44,12 @@ app.get("api/v1/websites", authmiddleware, async (req, res) => {
   const websites = await prismaClient.website.findMany({
     where: {
       userId,
-      disabled: false
+      disabled: false,
+    },
+    include: {
+      ticks: true,
     }
-  })
+  });
 
   res.json(websites);
 });
@@ -58,17 +61,16 @@ app.delete("api/v1/website/:id", authmiddleware, async (req, res) => {
   await prismaClient.website.update({
     where: {
       id: websiteId,
-      userId
+      userId,
     },
     data: {
-      disabled: true
-    }
-  })
+      disabled: true,
+    },
+  });
 
   res.json({
-    message: "Website deleted successfully"
-  })
-
+    message: "Website deleted successfully",
+  });
 });
 
 app.listen(3000, () => {
