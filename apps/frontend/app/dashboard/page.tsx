@@ -1,223 +1,257 @@
-"use client"
+"use client";
 import React, { useState, useMemo } from 'react';
-import { ChevronDown, ChevronUp, Globe, Plus, X } from 'lucide-react';
-import { useWebsites } from "@/hooks/useWebsites";
-import { subMinutes, parseISO, isWithinInterval } from 'date-fns';
-import { Button } from '@/components/ui/button';
+import { ChevronDown, ChevronUp, Globe, Plus, Moon, Sun } from 'lucide-react';
+import { useWebsites } from '@/hooks/useWebsites';
+import axios from 'axios';
+import { API_BACKEND_URL } from '@/config';
+import { useAuth } from '@clerk/nextjs';
 
-interface AggregatedTick {
-  status: 'up' | 'down';
-  timestamp: Date;
-}
+type UptimeStatus = "good" | "bad" | "unknown";
 
-function StatusIndicator({ status }: { status: string }) {
+function StatusCircle({ status }: { status: UptimeStatus }) {
   return (
-    <div className={`w-3 h-3 rounded-full ${
-      status === 'up' ? 'bg-green-500' : 'bg-red-500'
-    }`} />
+    <div className={`w-3 h-3 rounded-full ${status === 'good' ? 'bg-green-500' : status === 'bad' ? 'bg-red-500' : 'bg-gray-500'}`} />
   );
 }
 
-function UptimeHistory({ ticks }: { ticks: AggregatedTick[] }) {
+function UptimeTicks({ ticks }: { ticks: UptimeStatus[] }) {
   return (
-    <div className="flex gap-1 items-center">
+    <div className="flex gap-1 mt-2">
       {ticks.map((tick, index) => (
         <div
           key={index}
           className={`w-8 h-2 rounded ${
-            tick.status === 'up' ? 'bg-green-500/80' : 'bg-red-500/80'
+            tick === 'good' ? 'bg-green-500' : tick === 'bad' ? 'bg-red-500' : 'bg-gray-500'
           }`}
-          title={`Status: ${tick.status} at ${tick.timestamp.toLocaleTimeString()}`}
         />
       ))}
     </div>
   );
 }
 
-function WebsiteCard({ website }: { website: ReturnType<typeof useWebsites>[0] }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const aggregatedTicks = useMemo(() => {
-    const now = new Date();
-    const thirtyMinutesAgo = subMinutes(now, 30);
-    
-    // Filter ticks within last 30 minutes
-    const recentTicks = website.ticks
-      .filter(tick => {
-        const tickDate = parseISO(tick.createdAt);
-        return isWithinInterval(tickDate, { start: thirtyMinutesAgo, end: now });
-      })
-      .sort((a, b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime());
-
-    // Aggregate into 3-minute windows (10 windows for 30 minutes)
-    const windows: AggregatedTick[] = [];
-    for (let i = 0; i < 10; i++) {
-      const windowEnd = subMinutes(now, i * 3);
-      const windowStart = subMinutes(windowEnd, 3);
-      
-      const windowTicks = recentTicks.filter(tick => {
-        const tickDate = parseISO(tick.createdAt);
-        return isWithinInterval(tickDate, { start: windowStart, end: windowEnd });
-      });
-
-      // Determine status for this window (if any ticks are down, window is down)
-      const status = windowTicks.some(tick => tick.status === 'down') ? 'down' : 'up';
-      windows.push({
-        status,
-        timestamp: windowEnd
-      });
-    }
-
-    return windows.reverse();
-  }, [website.ticks]);
-
-  const currentStatus = useMemo(() => {
-    const latestTick = website.ticks
-      .sort((a, b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime())[0];
-    return latestTick?.status || 'unknown';
-  }, [website.ticks]);
-
-  const uptime = useMemo(() => {
-    const totalTicks = website.ticks.length;
-    if (totalTicks === 0) return '0%';
-    
-    const upTicks = website.ticks.filter(tick => tick.status === 'up').length;
-    return `${((upTicks / totalTicks) * 100).toFixed(1)}%`;
-  }, [website.ticks]);
+function CreateWebsiteModal({ isOpen, onClose }: { isOpen: boolean; onClose: (url: string | null) => void }) {
+  const [url, setUrl] = useState('');
+  if (!isOpen) return null;
 
   return (
-    <div className="bg-gray-800 rounded-lg shadow-xl overflow-hidden border border-gray-700">
-      <button
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-semibold mb-4 dark:text-white">Add New Website</h2>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              URL
+            </label>
+            <input
+              type="url"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+              placeholder="https://example.com"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </div>
+          <div className="flex justify-end space-x-3 mt-6">
+            <button
+              type="button"
+              onClick={() => onClose(null)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              onClick={() => onClose(url)}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+            >
+              Add Website
+            </button>
+          </div>
+      </div>
+    </div>
+  );
+}
+
+interface ProcessedWebsite {
+  id: string;
+  url: string;
+  status: UptimeStatus;
+  uptimePercentage: number;
+  lastChecked: string;
+  uptimeTicks: UptimeStatus[];
+}
+
+function WebsiteCard({ website }: { website: ProcessedWebsite }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+      <div
+        className="p-4 cursor-pointer flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-700/50 transition-colors"
       >
-        <div className="flex items-center gap-4">
-          <StatusIndicator status={currentStatus} />
-          <div className="text-left">
-            <h3 className="font-semibold text-gray-100">{website.url}</h3>
-            <p className="text-sm text-gray-400">{website.url}</p>
+        <div className="flex items-center space-x-4">
+          <StatusCircle status={website.status} />
+          <div>
+            <h3 className="font-semibold text-gray-900 dark:text-white">{website.url}</h3>
           </div>
         </div>
-        {isExpanded ? (
-          <ChevronUp className="w-5 h-5 text-gray-400" />
-        ) : (
-          <ChevronDown className="w-5 h-5 text-gray-400" />
-        )}
-      </button>
-
+        <div className="flex items-center space-x-4">
+          <span className="text-sm text-gray-600 dark:text-gray-300">
+            {website.uptimePercentage.toFixed(1)}% uptime
+          </span>
+          {isExpanded ? (
+            <ChevronUp className="w-5 h-5 text-gray-400 dark:text-gray-500" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-gray-400 dark:text-gray-500" />
+          )}
+        </div>
+      </div>
+      
       {isExpanded && (
-        <div className="px-6 py-4 border-t border-gray-700">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-400">Last 30 minutes (3-min windows):</span>
-              <span className="text-sm font-medium text-gray-200">Uptime: {uptime}</span>
-            </div>
-            <UptimeHistory ticks={aggregatedTicks} />
-            <div className="text-xs text-gray-500">
-              Latest check: {website.ticks[0]?.latency}ms
-            </div>
+        <div className="px-4 pb-4 border-t border-gray-100 dark:border-gray-700">
+          <div className="mt-3">
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">Last 30 minutes status:</p>
+            <UptimeTicks ticks={website.uptimeTicks} />
           </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+            Last checked: {website.lastChecked}
+          </p>
         </div>
       )}
     </div>
   );
 }
 
-function AddWebsiteModal({ isOpen, onClose }: {
-  isOpen: boolean;
-  onClose: () => void;
-}) {
-  const [url, setUrl] = useState('');
-
-  if (!isOpen) return null;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    // TODO: Implement API call to add website
-    setUrl('');
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-gray-100">Add New Website</h2>
-          <Button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-200 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </Button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="url" className="block text-sm font-medium text-gray-300 mb-1">
-              Website URL
-            </label>
-            <input
-              type="url"
-              id="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="https://example.com"
-              required
-            />
-          </div>
-          <div className="flex justify-end gap-3 mt-6">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-gray-100 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800"
-            >
-              Add Website
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
 function App() {
-  const websites = useWebsites();
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const {websites, refreshWebsites} = useWebsites();
+  if (!websites) {
+    return <p>Loading...</p>;
+  }
+  const { getToken } = useAuth();
+
+  const processedWebsites = useMemo(() => {
+    if (!websites || !Array.isArray(websites)) return [];
+    return websites.map(website => {
+      // Sort ticks by creation time
+      const sortedTicks = [...website.ticks].sort((a, b) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      // Get the most recent 30 minutes of ticks
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const recentTicks = sortedTicks.filter(tick => 
+        new Date(tick.createdAt) > thirtyMinutesAgo
+      );
+
+      // Aggregate ticks into 3-minute windows (10 windows total)
+      const windows: UptimeStatus[] = [];
+
+      for (let i = 0; i < 10; i++) {
+        const windowStart = new Date(Date.now() - (i + 1) * 3 * 60 * 1000);
+        const windowEnd = new Date(Date.now() - i * 3 * 60 * 1000);
+        
+        const windowTicks = recentTicks.filter(tick => {
+          const tickTime = new Date(tick.createdAt);
+          return tickTime >= windowStart && tickTime < windowEnd;
+        });
+
+        // Window is considered up if majority of ticks are up
+        const upTicks = windowTicks.filter(tick => tick.status === 'Good').length;
+        windows[9 - i] = windowTicks.length === 0 ? "unknown" : (upTicks / windowTicks.length) >= 0.5 ? "good" : "bad";
+      }
+
+      // Calculate overall status and uptime percentage
+      const totalTicks = sortedTicks.length;
+      const upTicks = sortedTicks.filter(tick => tick.status === 'Good').length;
+      const uptimePercentage = totalTicks === 0 ? 100 : (upTicks / totalTicks) * 100;
+
+      // Get the most recent status
+      const currentStatus = windows[windows.length - 1];
+
+      // Format the last checked time
+      const lastChecked = sortedTicks[0]
+        ? new Date(sortedTicks[0].createdAt).toLocaleTimeString()
+        : 'Never';
+
+      return {
+        id: website.id,
+        url: website.url,
+        status: currentStatus,
+        uptimePercentage,
+        lastChecked,
+        uptimeTicks: windows,
+      };
+    });
+  }, [websites]);
+
+  // Toggle dark mode
+  React.useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
 
   return (
-    <div className="min-h-screen bg-gray-900">
-      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
+      <div className="max-w-4xl mx-auto py-8 px-4">
         <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-3">
-            <Globe className="w-8 h-8 text-blue-400" />
-            <h1 className="text-3xl font-bold text-gray-100">Better Uptime</h1>
+          <div className="flex items-center space-x-2">
+            <Globe className="w-8 h-8 text-blue-600" />
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Uptime Monitor</h1>
           </div>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
-          >
-            <Plus className="w-4 h-4" />
-            Add Website
-          </button>
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer transition-colors duration-200"
+            >
+              {isDarkMode ? (
+                <Sun className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+              ) : (
+                <Moon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+              )}
+            </button>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Website</span>
+            </button>
+          </div>
         </div>
         
         <div className="space-y-4">
-          {websites.map(website => (
+          {processedWebsites.map((website) => (
             <WebsiteCard key={website.id} website={website} />
           ))}
         </div>
-
-        <AddWebsiteModal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-        />
       </div>
+
+      <CreateWebsiteModal
+        isOpen={isModalOpen}
+        onClose={async (url) => {
+            if (url === null) {
+                setIsModalOpen(false);
+                return;
+            }
+
+            const token = await getToken();
+            setIsModalOpen(false)
+            axios.post(`${API_BACKEND_URL}/api/v1/website`, {
+                url,
+            }, {
+                headers: {
+                    Authorization: token,
+                },
+            })
+            .then(() => {
+                refreshWebsites();
+            })
+        }}
+      />
     </div>
   );
 }

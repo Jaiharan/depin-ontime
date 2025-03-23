@@ -13,6 +13,8 @@ import {
   Globe,
   ArrowRight,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
 
 // Mock data for demonstration
 const services = [
@@ -85,6 +87,7 @@ const features = [
 ];
 
 function LandingPage({ onViewDashboard }: { onViewDashboard: () => void }) {
+  const router = useRouter();
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
       {/* Hero Section */}
@@ -99,13 +102,22 @@ function LandingPage({ onViewDashboard }: { onViewDashboard: () => void }) {
             Get instant notifications when things go wrong.
           </p>
           <div className="flex justify-center space-x-4">
-            <button
+            <Button
               onClick={onViewDashboard}
-              className="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-lg text-lg font-medium transition-colors flex items-center space-x-2"
+              className="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-lg text-lg font-medium transition-colors flex items-center space-x-2 cursor-pointer"
             >
               <span>View Live Status</span>
               <ArrowRight className="h-5 w-5" />
-            </button>
+            </Button>
+            <Button
+            onClick={() => {
+              router.push('/dashboard');
+            }}
+              className="bg-gray-800 hover:bg-gray-700 text-white px-6 py-3 rounded-lg text-lg font-medium transition-colors flex items-center space-x-2 cursor-pointer"
+            >
+              <span>View DashBoard</span>
+              <ArrowRight className="h-5 w-5" />
+            </Button>
           </div>
         </div>
       </section>
